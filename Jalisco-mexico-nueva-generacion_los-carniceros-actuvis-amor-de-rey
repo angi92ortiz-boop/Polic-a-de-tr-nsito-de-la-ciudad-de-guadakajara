@@ -266,4 +266,3 @@ LoginBtn.MouseButton1Click:Connect(function()
 end)
 
 lp.Idled:Connect(function() vu:CaptureController() vu:ClickButton2(Vector2.new()) end)
-[2/5, 8:45 p. m.] La S👹: https://github.com/angi92ortiz-boop/Polic-a-de-tr-nsito-de-la-ciudad-de-guadakajara/raw/refs/heads/main/Polic%C3%ADa%20de%20guadalajara
