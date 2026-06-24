@@ -451,4 +451,19 @@ Obsidian:AddColorConfig(VisualesDer, "Color ESP Distancia", Config.ESP.DistanceC
 -- PESTAÑA 4: DELETE
 local DeleteIzq, DeleteDer = Obsidian:CreateTab("Delete")
 Obsidian:AddButton(DeleteIzq, "Obtener Herramienta Delete", function() CreateDeleteTool() end)
-Obsidian:AddButton(Delete
+Obsidian:AddButton(DeleteIzq, "Restaurar (Uno por Uno)", function() RestoreLastDeleted() end)
+
+Obsidian:AddColorConfig(DeleteDer, "Color Filo Delete", Config.Delete.ToolColor, function(c) Config.Delete.ToolColor = c end)
+Obsidian:AddColorConfig(DeleteDer, "Color Fondo UI", BaseWindow.BackgroundColor3, function(c) BaseWindow.BackgroundColor3 = c end)
+
+-- PESTAÑA 5 & 6: UI CONFIG (ESTRUCTURA DE GUARDADO / CIERRE)
+local ConfigIzq, ConfigDer = Obsidian:CreateTab("UI Confi")
+Obsidian:AddButton(ConfigIzq, "Cerrar Panel Premium", function() GUI:Destroy() end)
+Obsidian:AddButton(ConfigDer, "Reiniciar Configuración", function()
+    Config.SilentAim.Enabled = false
+    Config.ESP.Box = false
+    Config.ESP.Name = false
+    Config.ESP.Health = false
+    Config.ESP.Distance = false
+    print("Configuración reiniciada de manera segura.")
+end)
