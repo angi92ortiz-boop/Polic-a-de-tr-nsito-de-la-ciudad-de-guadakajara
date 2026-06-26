@@ -1,0 +1,611 @@
+-- [[ OBSIDIAN UI EDITION - REESCRITO & OPTIMIZADO 2026 ]]
+-- Protegido contra desbordamientos, fugas de memoria y caídas del motor.
+
+local InputService = game:GetService("UserInputService")
+RunService local = juego:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local Players = game:GetService("Players")
+local Iluminación = juego:GetService("Iluminación")
+local TweenService = game:GetService("TweenService")
+
+local LocalPlayer = Jugadores.LocalPlayer
+Cámara local = workspace.CurrentCamera
+
+local dim2, dim = UDim2.new, UDim.new
+local rgb = Color3.fromRGB
+
+getgenv().Library = { Tabs = {}, Elements = {} }
+local DeletedObjects = {}
+local ESP_Cache = {}
+
+-- Paleta de Colores Oficial Estilo Obsidian UI
+temas locales = {
+    bg_main = rgb(15, 16, 18), -- Fondo ultra oscuro obsidiana
+    bg_sidebar = rgb(20, 22, 24), -- Lateral ligeramente más claro
+    bg_element = rgb(28, 30, 33), -- Elementos / Botones interactivos
+    acento = rgb(138, 43, 226), -- Violeta Eléctrico Obsidian (Muy limpio)
+    text_dark = rgb(140, 145, 155), -- Texto deseleccionado / secundario
+    text_light = rgb(240, 242, 245), -- Texto blanco limpio
+}
+
+-- [ PROTECCIÃ“N DE INTERFAZ ]
+función local ProtectUI(obj)
+    si syn y syn.protect_gui entonces
+        syn.protect_gui(obj)
+    si no, si gethui entonces
+        obj.Parent = gethui()
+        devolver
+    fin
+    obj.Name = "Obsidian_" .. math.random(10000, 99999)
+    obj.Parent = CoreGui
+fin
+
+-- [ AJUSTES INICIALES ]
+local ESP_Settings = { Box = false, Health = false, Tracers = false, Names = false }
+local Combat_Settings = { SilentAim = false, FOV = 100, ShowFOV = false, AutoClick = false, FullBright = false }
+local SpeedEnabled = false
+
+-- Guardado de iluminación original para restaurar correctamente
+local originalBrillo = Iluminación.Brillo
+local originalAmbient = Lighting.Ambient
+
+-- [ DIBUJADO DE FOV AUTOMÁTICO ]
+local FOVCircle = Drawing.new("Círculo")
+FOVCircle.Thickness = 1.5
+FOVCircle.Color = themes.accent
+FOVCircle.Filled = false
+FOVCircle.Visible = false
+
+función local GetClosestToFOV()
+    objetivo local, más cercano = nil, Combat_Settings.FOV
+    centro local = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+    para _, p en ipairs(Players:GetPlayers()) hacer
+        Si p ~= LocalPlayer y p.Character entonces
+            local char = p.Character
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local head = char:FindFirstChild("Head") or char:FindFirstChild("HumanoidRootPart")
+            
+            si hum and head and hum.Health > 0 entonces
+                posición local, en pantalla = Cámara:Punto del mundo a la ventana gráfica(cabeza.Posición)
+                si está en pantalla entonces
+                    distancia local = (Vector2.new(pos.X, pos.Y) - centro).Magnitud
+                    si dist < más cercano entonces
+                        más cercano = distancia
+                        objetivo = p
+                    fin
+                fin
+            fin
+        fin
+    fin
+    objetivo de retorno
+fin
+
+-- [ METAMÉTODO HOOK CON SEGURO (Anti-Crash) ]
+si hookmetamethod entonces
+    nombre antiguo local
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        argumentos locales = { ... }
+        método local = getnamecallmethod()
+        
+        Si no se cumple checkcaller() y method == "FireServer" y Combat_Settings.SilentAim entonces
+            objetivo local = ObtenerElMásCercadoAlFOV()
+            Si target y target.Character y target.Character:FindFirstChild("Head") entonces
+                para i, arg en ipairs(args) hacer
+                    si typeof(arg) == "Vector3" entonces
+                        args[i] = target.Character.Head.Position
+                    fin
+                fin
+            fin
+        fin
+        return oldNamecall(self, unpack(args))
+    fin)
+fin
+
+-- [ SISTEMA DRAG INTERACTIVO SUAVE ]
+función local HacerArrastrable(obj)
+    arrastre local, dragStart, startPos
+    obj.InputBegan:Connect(function(input)
+        Si input.UserInputType == Enum.UserInputType.MouseButton1 o input.UserInputType == Enum.UserInputType.Touch entonces
+            arrastrando = verdadero
+            dragStart = input.Position
+            startPos = obj.Position
+        fin
+    fin)
+    InputService.InputChanged:Connect(function(input)
+        si se está arrastrando y (input.UserInputType == Enum.UserInputType.MouseMovement o input.UserInputType == Enum.UserInputType.Touch) entonces
+            delta local = input.Position - dragStart
+            TweenService:Create(obj, TweenInfo.new(0.1, Enum.EasingStyle.Quad), {
+                Posición = dim2(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            }):Jugar()
+        fin
+    fin)
+    InputService.InputEnded:Connect(function(input)
+        Si input.UserInputType == Enum.UserInputType.MouseButton1 o input.UserInputType == Enum.UserInputType.Touch entonces
+            arrastrando = falso
+        fin
+    fin)
+fin
+
+-- [ MOTOR ESP OPTIMIZADO (Render por hilos independientes) ]
+función local CreateESP(jugador)
+    Si el jugador es igual a LocalPlayer, entonces regresa.
+    Si ESP_Cache[player] entonces regresar fin
+
+    objetos locales = {
+        Caja = Dibujo.new("Cuadrado"),
+        Barra de salud = Dibujo.new("Línea"),
+        Trazador = Dibujo.new("Línea"),
+        NameTag = Drawing.new("Text")
+    }
+
+    objetos.Box.Color = temas.accent
+    objetos.Cajón.Grosor = 1.5
+    objetos.Box.Filled = false
+    
+    objetos.HealthBar.Color = rgb(50, 220, 80)
+    objetos.HealthBar.Thickness = 2.5
+    
+    objetos.Rastreador.Color = temas.texto_luz
+    objetos.Trazador.Espesor = 1
+    
+    objetos.NameTag.Color = temas.text_light
+    objetos.Etiqueta.Centro = verdadero
+    objetos.Etiqueta.Esquema = verdadero
+    objetos.NameTag.Size = 13
+
+    ESP_Cache[jugador] = objetos
+
+    conexión local
+    conexión = RunService.RenderStepped:Connect(function()
+        personaje local = jugador.Personaje
+        raíz local = char y char:FindFirstChild("HumanoidRootPart")
+        local hum = char y char:FindFirstChildOfClass("Humanoid")
+        
+        Si root y hum y hum.Health > 0 entonces
+            posición local, en pantalla = Cámara:WorldToViewportPoint(root.Position)
+            
+            si está en pantalla entonces
+                local sizeY = (Camera:WorldToViewportPoint(root.Position + Vector3.new(0, 3, 0)).Y - Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0)).Y)
+                local boxSize = Vector2.new(sizeY / 1.5, sizeY)
+                local boxPos = Vector2.new(pos.X - boxSize.X / 2, pos.Y - boxSize.Y / 2)
+
+                objetos.Box.Visible = ESP_Settings.Box
+                objetos.Tamaño.Caja = tamaño.caja
+                objetos.Box.Position = boxPos
+
+                Si ESP_Settings.Health entonces
+                    objetos.HealthBar.Visible = verdadero
+                    porcentaje local = hum.Salud / hum.SaludMáxima
+                    objetos.HealthBar.From = Vector2.new(boxPos.X - 6, boxPos.Y + boxSize.Y)
+                    objetos.HealthBar.To = Vector2.new(boxPos.X - 6, boxPos.Y + boxSize.Y - (boxSize.Y * pct))
+                demás
+                    objetos.HealthBar.Visible = false
+                fin
+
+                Si ESP_Settings.Names entonces
+                    objetos.EtiquetaNombre.Visible = verdadero
+                    objetos.NameTag.Text = string.format("%s [%d HP]", player.Name, math.floor(hum.Health))
+                    objetos.NameTag.Position = Vector2.new(pos.X, boxPos.Y - 16)
+                demás
+                    objetos.EtiquetaNombre.Visible = falso
+                fin
+
+                Si ESP_Settings.Tracers entonces
+                    objetos.Trazador.Visible = verdadero
+                    objetos.Tracer.From = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y)
+                    objetos.Trazador.A = Vector2.new(pos.X, pos.Y)
+                demás
+                    objetos.Trazador.Visible = falso
+                fin
+            demás
+                para _, obj en pairs(objects) hacer obj.Visible = falso fin
+            fin
+        demás
+            para _, obj en pairs(objects) hacer obj.Visible = falso fin
+        fin
+    fin)
+
+    ESP_Cache[player].Connection = conexión
+fin
+
+función local RemoveESP(jugador)
+    si ESP_Cache[jugador] entonces
+        Si ESP_Cache[player].Connection, entonces ESP_Cache[player].Connection:Disconnect() fin
+        para _, obj en pairs(ESP_Cache[player]) hacer
+            Si typeof(obj) ~= "RBXScriptConnection" entonces pcall(function() obj:Remove() end) fin
+        fin
+        ESP_Cache[player] = nil
+    fin
+fin
+
+para _, p en ipairs(Players:GetPlayers()) hacer task.spawn(CreateESP, p) fin
+Jugadores.JugadorAñadido:Conectar(CrearESP)
+Jugadores.PlayerRemoving:Connect(RemoveESP)
+
+-- [ VERIFICACIÓN: SISTEMA DE LLAVES DE OBSIDIANA ]
+función local StartKeySystem(onSuccess)
+    local KeyGui = Instance.new("ScreenGui")
+    ProtectUI(KeyGui)
+
+    local Main = Instance.new("Frame")
+    Main.Size = dim2(0, 320, 0, 200)
+    Main.Position = dim2(0.5, -160, 0.5, -100)
+    Main.BackgroundColor3 = themes.bg_main
+    Principal.Padre = KeyGui
+    HacerArrastrable(Principal)
+    Instance.new("UICorner", Main).CornerRadius = dim(0, 8)
+
+    local Stroke = Instance.new("UIStroke", Main)
+    Stroke.Color = themes.bg_element
+    Grosor del trazo = 1,5
+
+    local Título = Instancia.new("Etiqueta de texto", Principal)
+    Título.Tamaño = dim2(1, 0, 0, 45)
+    Título.Texto = "SEGURIDAD DE OBSIDIANA"
+    Título.Fuente = Enum.Fuente.GothamBold
+    Título.Tamaño del texto = 16
+    Título.TextColor3 = temas.text_light
+    Título.TransparenciaDeFondo = 1
+
+    local Sub = Instancia.new("Etiqueta de texto", Principal)
+    Sub.Size = dim2(1, 0, 0, 20)
+    Subposición = dim2(0, 0, 0, 40)
+    Sub.Text = "Ingresa tu clave de validación"
+    Sub.Fuente = Enum.Fuente.Gotham
+    Sub.TextSize = 12
+    Sub.TextColor3 = themes.text_dark
+    Sub.TransparenciaDeFondo = 1
+
+    local TextBox = Instance.new("TextBox", Main)
+    TextBox.Size = dim2(0.85, 0, 0, 38)
+    TextBox.Position = dim2(0.075, 0, 0.45, 0)
+    TextBox.BackgroundColor3 = themes.bg_sidebar
+    Cuadro de texto.Texto = ""
+    TextBox.PlaceholderText = "Escribir Key..."
+    TextBox.PlaceholderColor3 = themes.text_dark
+    TextBox.TextColor3 = themes.text_light
+    TextBox.Font = Enum.Font.Gotham
+    TextBox.TextSize = 14
+    Instance.new("UICorner", TextBox).CornerRadius = dim(0, 6)
+
+    local S_Line = Instance.new("UIStroke", TextBox)
+    S_Line.Color = themes.bg_element
+
+    local SubmitBtn = Instance.new("TextButton", Main)
+    SubmitBtn.Size = dim2(0.85, 0, 0, 38)
+    SubmitBtn.Position = dim2(0.075, 0, 0.70, 0)
+    SubmitBtn.BackgroundColor3 = themes.accent
+    SubmitBtn.Text = "CONTINUAR"
+    SubmitBtn.TextColor3 = themes.text_light
+    SubmitBtn.Font = Enum.Font.GothamBold
+    SubmitBtn.TextSize = 13
+    Instance.new("UICorner", SubmitBtn).CornerRadius = dim(0, 6)
+
+    SubmitBtn.MouseButton1Click:Connect(function()
+        Si TextBox.Text == "TIO_MIKI" entonces
+            SubmitBtn.Text = "ACCESO ENCONTRADO"
+            TweenService:Create(Main, TweenInfo.new(0.3), {BackgroundTransparency = 1}):Play()
+            tarea.espera(0.4)
+            KeyGui:Destroy()
+            onSuccess()
+        demás
+            SubmitBtn.Text = "CLAVE ERRÃ“NEA"
+            SubmitBtn.BackgroundColor3 = rgb(200, 50, 50)
+            tarea.espera(1.2)
+            SubmitBtn.Text = "CONTINUAR"
+            SubmitBtn.BackgroundColor3 = themes.accent
+        fin
+    fin)
+fin
+
+-- [ ARQUITECTURA DE LA LIBRERÍA OBSIDIANA ]
+Biblioteca de funciones: Ventana()
+    local MainGui = Instance.new("ScreenGui")
+    ProtectUI(MainGui)
+    
+    OpenBar local = Instancia.new("Marco", MainGui)
+    OpenBar.Tamaño = dim2(0, 220, 0, 40)
+    OpenBar.Posición = dim2(0,5, -110, 0,02, 0)
+    OpenBar.BackgroundColor3 = themes.bg_main
+    OpenBar.Visible = false
+    Hacer arrastrable (Barra abierta)
+    Instance.new("UICorner", OpenBar).CornerRadius = dim(0, 6)
+    Instance.new("UIStroke", OpenBar).Color = themes.accent
+
+    local OpenBtn = Instance.new("TextButton", OpenBar)
+    OpenBtn.Size = dim2(1, 0, 1, 0)
+    OpenBtn.Text = "Desplegar la interfaz de usuario de Obsidiana"
+    OpenBtn.TextColor3 = themes.text_light
+    OpenBtn.BackgroundTransparency = 1
+    OpenBtn.Font = Enum.Font.GothamBold
+    OpenBtn.TextSize = 13
+
+    local Principal = Instancia.nueva("Marco", MainGui)
+    Main.Size = dim2(0, 560, 0, 360)
+    Main.Position = dim2(0.5, -280, 0.5, -180)
+    Main.BackgroundColor3 = themes.bg_main
+    HacerArrastrable(Principal)
+    Instance.new("UICorner", Main).CornerRadius = dim(0, 9)
+    Instance.new("UIStroke", Main).Color = themes.bg_element
+
+    local SideBar = Instancia.new("Marco", Principal)
+    SideBar.Size = dim2(0, 140, 1, 0)
+    Barra lateral.Color de fondo3 = temas.bg_sidebar
+    Instance.new("UICorner", SideBar).CornerRadius = dim(0, 9)
+
+    -- Capa protectora para tapar esquinas derechas del sidebar
+    local Patch = Instancia.new("Marco", Barra lateral)
+    Patch.Size = dim2(0, 10, 1, 0)
+    Patch.Position = dim2(1, -10, 0, 0)
+    Patch.BackgroundColor3 = themes.bg_sidebar
+    Patch.BorderSizePixel = 0
+
+    local Título = Instancia.new("Etiqueta de texto", Barra lateral)
+    Título.Tamaño = dim2(1, 0, 0, 45)
+    Título.Texto = "OBSIDIANA"
+    Título.Fuente = Enum.Fuente.GothamBold
+    Título.Tamaño del texto = 15
+    Título.TextColor3 = temas.accent
+    Título.TransparenciaDeFondo = 1
+
+    local TabList = Instancia.new("Marco", Barra lateral)
+    TabList.Size = dim2(1, 0, 1, -60)
+    TabList.Position = dim2(0, 0, 0, 50)
+    TabList.BackgroundTransparency = 1
+
+    local tabLayout = Instance.new("UIListLayout", TabList)
+    tabLayout.Relleno = dim(0, 4)
+    tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+    local PageHolder = Instancia.new("Marco", Principal)
+    PageHolder.Size = dim2(1, -155, 1, -50)
+    PageHolder.Position = dim2(0, 150, 0, 40)
+    PageHolder.BackgroundTransparency = 1
+
+    local CloseBtn = Instance.new("TextButton", Main)
+    CloseBtn.Size = dim2(0, 30, 0, 30)
+    PosiciónBloqueCerrar = dim2(1, -35, 0, 8)
+    CloseBtn.Text = "âœ•"
+    CloseBtn.TextSize = 14
+    CloseBtn.Font = Enum.Font.GothamBold
+    CloseBtn.TextColor3 = themes.text_dark
+    CloseBtn.BackgroundTransparency = 1
+
+    CloseBtn.MouseButton1Click:Connect(function() Main.Visible = false; OpenBar.Visible = true end)
+    OpenBtn.MouseButton1Click:Connect(function() Main.Visible = true; OpenBar.Visible = false end)
+
+    Función Biblioteca:AddTab(nombre)
+        local TabButton = Instance.new("TextButton", TabList)
+        TabButton.Tamaño = dim2(0.9, 0, 0, 32)
+        TabButton.BackgroundColor3 = Color3.new(0,0,0)
+        TabButton.BackgroundTransparency = 1
+        TabButton.Text = nombre
+        TabButton.TextColor3 = themes.text_dark
+        TabButton.Font = Enum.Font.GothamBold
+        TabButton.TextSize = 12
+        Instance.new("UICorner", TabButton).CornerRadius = dim(0, 5)
+
+        local Page = Instance.new("ScrollingFrame", PageHolder)
+        Page.Size = dim2(1, 0, 1, 0)
+        Página.Visible = falso
+        Page.BackgroundTransparency = 1
+        Page.ScrollBarThickness = 2
+        Page.ScrollBarImageColor3 = themes.bg_element
+
+        local pageLayout = Instance.new("UIListLayout", Page)
+        pageLayout.Padding = tenue(0, 6)
+
+        TabButton.MouseButton1Click:Connect(function()
+            para _, t en ipairs(Library.Tabs) hacer
+                t.Button.TextColor3 = themes.text_dark
+                t.Button.BackgroundTransparency = 1
+                t.Page.Visible = false
+            fin
+            TabButton.TextColor3 = themes.text_light
+            TabButton.BackgroundTransparency = 0.5
+            TabButton.BackgroundColor3 = themes.bg_element
+            Página.Visible = verdadero
+        fin)
+
+        tabla.insertar(Library.Tabs, { Button = TabButton, Page = Page })
+        si #Library.Tabs == 1 entonces
+            TabButton.TextColor3 = themes.text_light
+            TabButton.BackgroundTransparency = 0.5
+            TabButton.BackgroundColor3 = themes.bg_element
+            Página.Visible = verdadero
+        fin
+        Volver a la página
+    fin
+
+    Función Biblioteca:AddToggle(página, texto, devolución de llamada)
+        local Tgl = Instancia.new("TextButton", página)
+        Tgl.Size = dim2(1, -10, 0, 36)
+        Tgl.BackgroundColor3 = themes.bg_element
+        Tgl.Text = " " .. texto
+        Tgl.TextColor3 = themes.text_dark
+        Tgl.Font = Enum.Font.Gotham
+        Tgl.TextSize = 13
+        Tgl.TextXAlignment = Enum.TextXAlignment.Left
+        Instance.new("UICorner", Tgl).CornerRadius = dim(0, 5)
+        Instance.new("UIStroke", Tgl).Color = themes.bg_sidebar
+
+        Indicador local = Instancia.new("Marco", Tgl)
+        Indicador.Tamaño = dim2(0, 12, 0, 12)
+        Indicador.Posición = dim2(1, -25, 0.5, -6)
+        Indicator.BackgroundColor3 = themes.bg_sidebar
+        Instancia.new("UICorner", Indicador).RadioDeCorner = dim(0, 3)
+
+        estado local = falso
+        Tgl.MouseButton1Click:Connect(function()
+            estado = no estado
+            Tgl.TextColor3 = estado y temas.text_light o temas.text_dark
+            Indicator.BackgroundColor3 = estado y themes.accent o themes.bg_sidebar
+            tarea.spawn(callback, estado)
+        fin)
+    fin
+
+    Biblioteca de funciones:AddSlider(página, texto, min, max, devolución de llamada)
+        marco local = Instancia.new("Marco", página)
+        frame.Size = dim2(1, -10, 0, 48)
+        frame.BackgroundColor3 = themes.bg_element
+        Instancia.new("UICorner", frame).CornerRadius = dim(0, 5)
+
+        etiqueta local = Instancia.new("Etiqueta de texto", marco)
+        label.Size = dim2(1, -15, 0, 20)
+        etiqueta.Posición = dim2(0, 10, 0, 4)
+        etiqueta.Texto = texto
+        etiqueta.TextColor3 = temas.text_light
+        etiqueta.Fuente = Enum.Fuente.Gotham
+        etiqueta.TextSize = 12
+        etiqueta.TextXAlignment = Enum.TextXAlignment.Left
+        etiqueta.TransparenciaDeFondo = 1
+
+        local bar = Instancia.new("TextButton", frame)
+        bar.Size = dim2(0.92, 0, 0, 5)
+        barra.Posición = dim2(0.04, 0, 0.7, 0)
+        barra.BackgroundColor3 = themes.bg_sidebar
+        barra.Texto = ""
+        Instancia.new("UICorner", bar)
+
+        relleno local = Instancia.new("Marco", barra)
+        fill.Size = dim2(0.3, 0, 1, 0)
+        fill.BackgroundColor3 = themes.accent
+        Instancia.new("UICorner", rellenar)
+
+        función local actualizar(entrada)
+            local p = math.clamp((input.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+            fill.Size = dim2(p, 0, 1, 0)
+            valor local = math.floor(mín + (máximo - mín) * p)
+            etiqueta.Texto = texto .. " : " .. tostring(valor)
+            tarea.spawn(callback, valor)
+        fin
+
+        movimiento local = falso
+        barra.InputBegan:Connect(function(input)
+            Si input.UserInputType == Enum.UserInputType.MouseButton1 o input.UserInputType == Enum.UserInputType.Touch entonces
+                en movimiento = verdadero
+                actualizar(entrada)
+            fin
+        fin)
+        InputService.InputChanged:Connect(function(input)
+            si se está moviendo y (input.UserInputType == Enum.UserInputType.MouseMovement o input.UserInputType == Enum.UserInputType.Touch) entonces
+                actualizar(entrada)
+            fin
+        fin)
+        InputService.InputEnded:Connect(function(input)
+            Si input.UserInputType == Enum.UserInputType.MouseButton1 o input.UserInputType == Enum.UserInputType.Touch entonces
+                en movimiento = falso
+            fin
+        fin)
+    fin
+    
+    Biblioteca de funciones:AddButton(página, texto, devolución de llamada)
+        local Btn = Instancia.new("TextButton", página)
+        Tamaño del botón = dim2(1, -10, 0, 36)
+        Btn.BackgroundColor3 = themes.bg_element
+        Btn.Texto = texto
+        Btn.TextColor3 = themes.text_light
+        Btn.Font = Enum.Font.GothamBold
+        Btn.TextSize = 13
+        Instance.new("UICorner", Btn).CornerRadius = dim(0, 5)
+        
+        local S_Line = Instance.new("UIStroke", Btn)
+        S_Line.Color = themes.accent
+        S_Line.Transparencia = 0,6
+
+        Btn.MouseButton1Click:Connect(function()
+            pcall(callback)
+        fin)
+    fin
+
+    Biblioteca de regreso
+fin
+
+-- [ EJECUCIÃ“N CENTRAL CON FILTROS SEGUROS ]
+StartKeySystem(función()
+    local Ventana = Biblioteca:Ventana()
+    local CombatTab = Window:AddTab("Combate")
+    local VisualsTab = Window:AddTab("Visuals")
+    local ToolsTab = Window:AddTab("Herramientas")
+    local ConfigTab = Window:AddTab("UI Config") -- Nueva Pestaña Solicitada
+
+    -- PROCESADOR CENTRAL DE LAtido
+    RunService.Heartbeat:Connect(function()
+        pcall(función()
+            FOVCircle.Visible = Combat_Settings.ShowFOV
+            FOVCircle.Radius = Combat_Settings.FOV
+            FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+            Si SpeedEnabled y LocalPlayer.Character entonces
+                local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+                Si hum y hum.MoveDirection.Magnitude > 0 entonces
+                    LocalPlayer.Character:TranslateBy(hum.MoveDirection * (23 / 100))
+                fin
+            fin
+
+            Si Combat_Settings.AutoClick y LocalPlayer.Character entonces
+                herramienta local = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                Si la herramienta y (InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) o #InputService:GetTouches() > 0) entonces
+                    herramienta:Activar()
+                fin
+            fin
+        fin)
+    fin)
+
+    -- CONTENIDO: COMBATE
+    Biblioteca:AddToggle(CombatTab, "Apuntar en silencio (FOV)", function(v) Combat_Settings.SilentAim = v end)
+    Biblioteca:AddToggle(CombatTab, "Mostrar círculo FOV", function(v) Combat_Settings.ShowFOV = v end)
+    Biblioteca:AddSlider(CombatTab, "Radio del FOV", 50, 600, function(v) Combat_Settings.FOV = v end)
+    Biblioteca:AddToggle(CombatTab, "AutoClick (Arma)", function(v) Combat_Settings.AutoClick = v end)
+
+    -- CONTENIDO: VISUALES
+    Biblioteca:AddToggle(VisualsTab, "ESP Nombres", function(v) ESP_Settings.Names = v end)
+    Biblioteca:AddToggle(VisualsTab, "ESP Cuadros (Box)", function(v) ESP_Settings.Box = v end)
+    Biblioteca:AddToggle(VisualsTab, "ESP Trazadores (LÃneas)", function(v) ESP_Settings.Tracers = v end)
+    Biblioteca:AddToggle(VisualsTab, "ESP Barra de Vida", función(v) ESP_Settings.Health = v end)
+
+    -- CONTENIDO: HERRAMIENTAS
+    Biblioteca:AddToggle(ToolsTab, "Speed ​​Hack Casual (23)", function(v) SpeedEnabled = v end)
+    Biblioteca:AddButton(ToolsTab, "Obtener Herramienta Borradora", función()
+        herramienta local = Instancia.new("Herramienta")
+        herramienta.Nombre = "Herramienta de eliminación de obsidiana"
+        herramienta.RequiereHandle = false
+        herramienta.Parent = LocalPlayer.Backpack
+        
+        herramienta.Activada:Conectar(función()
+            ratón local = JugadorLocal:ObtenerRatón()
+            Si mouse.Target y mouse.Target:IsA("BasePart") entonces
+                local obj = mouse.Target
+                tabla.insertar(ObjetosEliminados, { o = obj, p = obj.Padre })
+                obj.Parent = nil
+            fin
+        fin)
+    fin)
+    Biblioteca:AddButton(TabHerramientas, "Restaurar Todo lo Borrado", función()
+        para _, d en ipairs(ObjetosEliminados) hacer
+            si haces entonces pcall(function() doParent = dp fin) fin
+        fin
+        ObjetosEliminados = {}
+    fin)
+
+    -- CONTENIDO: UI CONFIG (Gestión total del ambiente e interfaz)
+    Biblioteca:AddToggle(ConfigTab, "Modo Full Bright (IluminaciÃ³n)", function(v)
+        Combat_Settings.FullBright = v
+        si v entonces
+            Iluminación.Brillo = 2
+            Iluminación.Ambiental = rgb(255, 255, 255)
+        demás
+            Iluminación.Brillo = brillooriginal
+            Iluminación.Ambiental = originalAmbiental
+        fin
+    fin)
+
+    Biblioteca:AddButton(ConfigTab, "Destruir Interfaz por Completo", función()
+        FOVCircle:Eliminar()
+        para _, p en ipairs(Players:GetPlayers()) hacer RemoveESP(p) fin
+        MainGui:Destroy()
+    fin)
+
+    print("OBSIDIAN UI: Ejecución limpia y optimizada sin riesgos de Crash.")
+fin)
