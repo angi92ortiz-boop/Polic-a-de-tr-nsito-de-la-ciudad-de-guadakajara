@@ -1,0 +1,601 @@
+-- PARRA Edition - HUD V2 Galaxy (Visual & Security Overhaul + Key System)
+-- Optimized for Performance & Stability
+
+local InputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local Players = game:GetService("Players")
+local Lighting = game:GetService("Lighting")
+
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+local dim2, dim = UDim2.new, UDim.new
+local rgb = Color3.fromRGB
+
+getgenv().Library = { Tabs = {} }
+local DeletedObjects = {}
+local ESP_Cache = {}
+
+local themes = {
+    accent = rgb(255, 0, 0),
+    white = rgb(255, 255, 255),
+    background = rgb(17, 19, 19),
+    deselected = rgb(89, 91, 91),
+}
+
+-- [ SEGURIDAD E INTEGRIDAD ]
+local function ProtectUI(obj)
+    obj.Name = "PARRA_" .. math.random(10000, 99999)
+end
+
+-- [ CONFIGURACIONES ]
+local ESP_Settings = { Box = false, Health = false, Tracers = false, Names = false }
+local Combat_Settings = { SilentAim = false, FOV = 100, ShowFOV = false, AutoClick = false, NoRecoil = false }
+local SpeedEnabled = false
+
+-- [ LÓGICA DE COMBATE AMORTIGUADA ]
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Thickness = 1
+FOVCircle.Color = themes.accent
+FOVCircle.Filled = false
+FOVCircle.Visible = false
+
+local function GetClosestToFOV()
+    local target, closest = nil, Combat_Settings.FOV
+    local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer and p.Character then
+            local char = p.Character
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local head = char:FindFirstChild("Head")
+            
+            if hum and head and hum.Health > 0 then
+                local pos, onScreen = Camera:WorldToViewportPoint(head.Position)
+                if onScreen then
+                    local dist = (Vector2.new(pos.X, pos.Y) - center).Magnitude
+                    if dist < closest then 
+                        closest = dist
+                        target = p 
+                    end
+                end
+            end
+        end
+    end
+    return target
+end
+
+-- [ UNIFICACIÓN DE METAMÉTODOS (Previene desbordamiento de pila) ]
+if hookmetamethod then
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local args = { ... }
+        local method = getnamecallmethod()
+        
+        if not checkcaller() then
+            if method == "FireServer" and Combat_Settings.SilentAim then
+                local target = GetClosestToFOV()
+                if target and target.Character and target.Character:FindFirstChild("Head") then
+                    for i, arg in ipairs(args) do
+                        if typeof(arg) == "Vector3" then 
+                            args[i] = target.Character.Head.Position 
+                        end
+                    end
+                end
+            end
+        end
+        return oldNamecall(self, unpack(args))
+    end)
+end
+
+-- [ DISEÑO DE INTERFAZ Y EFECTOS ]
+local function CreateGalaxy(parent)
+    local canvas = Instance.new("Frame")
+    canvas.Size = dim2(1, 0, 1, 0)
+    canvas.BackgroundTransparency = 1
+    canvas.ClipsDescendants = true
+    canvas.Parent = parent
+
+    local stars = {}
+    for i = 1, 45 do -- Reducido de 65 a 45 para optimizar ciclos de renderizado
+        local star = Instance.new("Frame")
+        star.Size = dim2(0, math.random(1, 2), 0, math.random(1, 2))
+        star.Position = dim2(math.random(), 0, math.random(), 0)
+        star.BackgroundColor3 = themes.white
+        star.BorderSizePixel = 0
+        star.Parent = canvas
+        table.insert(stars, { frame = star, speed = math.random(6, 14) / 1000 })
+    end
+
+    RunService.Heartbeat:Connect(function()
+        for _, s in ipairs(stars) do
+            local nY = s.frame.Position.Y.Scale + s.speed
+            if nY > 1 then nY = -0.02 end
+            s.frame.Position = dim2(s.frame.Position.X.Scale, 0, nY, 0)
+        end
+    end)
+end
+
+local function ApplySplitEffect(obj)
+    local grad = Instance.new("UIGradient")
+    grad.Color = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, themes.white),
+        ColorSequenceKeypoint.new(0.5, themes.white),
+        ColorSequenceKeypoint.new(0.501, themes.accent),
+        ColorSequenceKeypoint.new(1, themes.accent)
+    })
+    grad.Parent = obj
+end
+
+local function ApplyShadowBorder(obj)
+    local Glow = Instance.new("ImageLabel")
+    Glow.BackgroundTransparency = 1
+    Glow.Position = dim2(0, -15, 0, -15)
+    Glow.Size = dim2(1, 30, 1, 30)
+    Glow.ZIndex = obj.ZIndex - 1
+    Glow.Image = "rbxassetid://5028857084"
+    Glow.ScaleType = Enum.ScaleType.Slice
+    Glow.SliceCenter = Rect.new(24, 24, 276, 276)
+    Glow.Parent = obj
+    ApplySplitEffect(Glow)
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Thickness = 1.8
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    stroke.Color = themes.white
+    stroke.Parent = obj
+    ApplySplitEffect(stroke)
+end
+
+local function MakeDraggable(obj)
+    local dragging, dragStart, startPos
+    obj.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = obj.Position
+        end
+    end)
+    InputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            obj.Position = dim2(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    InputService.InputEnded:Connect(function(input) 
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then 
+            dragging = false 
+        end 
+    end)
+end
+
+-- [ GESTIÓN Y LIMPIEZA DEL ESP ]
+local function CreateESP(player)
+    if player == LocalPlayer then return end
+
+    local objects = {
+        Box = Drawing.new("Square"),
+        HealthBar = Drawing.new("Line"),
+        Tracer = Drawing.new("Line"),
+        NameTag = Drawing.new("Text")
+    }
+
+    objects.Box.Color = themes.white
+    objects.Box.Thickness = 1
+    objects.Box.Filled = false
+    
+    objects.HealthBar.Color = rgb(0, 255, 0)
+    objects.HealthBar.Thickness = 2
+    
+    objects.Tracer.Color = themes.white
+    objects.Tracer.Thickness = 1
+    
+    objects.NameTag.Color = themes.white
+    objects.NameTag.Center = true
+    objects.NameTag.Outline = true
+    objects.NameTag.Size = 14
+
+    ESP_Cache[player] = objects
+
+    local connection
+    connection = RunService.RenderStepped:Connect(function()
+        if player.Character and player.Character:FindFirstChild("HumanoidRootPart") and player.Character:FindFirstChildOfClass("Humanoid") then
+            local char = player.Character
+            local root = char.HumanoidRootPart
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            
+            local pos, onScreen = Camera:WorldToViewportPoint(root.Position)
+            
+            if onScreen and hum.Health > 0 then
+                local sizeY = (Camera:WorldToViewportPoint(root.Position + Vector3.new(0, 3, 0)).Y - Camera:WorldToViewportPoint(root.Position - Vector3.new(0, 3, 0)).Y)
+                local boxSize = Vector2.new(sizeY / 1.5, sizeY)
+                local boxPos = Vector2.new(pos.X - boxSize.X / 2, pos.Y - boxSize.Y / 2)
+
+                objects.Box.Visible = ESP_Settings.Box
+                objects.Box.Size = boxSize
+                objects.Box.Position = boxPos
+
+                objects.HealthBar.Visible = ESP_Settings.Health
+                local healthPercent = hum.Health / hum.MaxHealth
+                objects.HealthBar.From = Vector2.new(boxPos.X - 7, boxPos.Y + boxSize.Y)
+                objects.HealthBar.To = Vector2.new(boxPos.X - 7, boxPos.Y + boxSize.Y - (boxSize.Y * healthPercent))
+
+                objects.NameTag.Visible = ESP_Settings.Names
+                objects.NameTag.Text = player.Name
+                objects.NameTag.Position = Vector2.new(pos.X, boxPos.Y - 15)
+
+                if ESP_Settings.Tracers and GetClosestToFOV() == player and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") then
+                    local myHeadPos = Camera:WorldToViewportPoint(LocalPlayer.Character.Head.Position)
+                    objects.Tracer.Visible = true
+                    objects.Tracer.From = Vector2.new(myHeadPos.X, myHeadPos.Y)
+                    objects.Tracer.To = Vector2.new(pos.X, pos.Y)
+                else 
+                    objects.Tracer.Visible = false 
+                end
+            else
+                for _, obj in pairs(objects) do obj.Visible = false end
+            end
+        else
+            for _, obj in pairs(objects) do obj.Visible = false end
+        end
+    end)
+
+    ESP_Cache[player].Connection = connection
+end
+
+local function RemoveESP(player)
+    if ESP_Cache[player] then
+        if ESP_Cache[player].Connection then 
+            ESP_Cache[player].Connection:Disconnect() 
+        end
+        for _, obj in pairs(ESP_Cache[player]) do
+            if typeof(obj) ~= "RBXScriptConnection" then 
+                obj:Remove() 
+            end
+        end
+        ESP_Cache[player] = nil
+    end
+end
+
+for _, p in ipairs(Players:GetPlayers()) do CreateESP(p) end
+Players.PlayerAdded:Connect(CreateESP)
+Players.PlayerRemoving:Connect(RemoveESP)
+
+-- [ SISTEMA DE VERIFICACIÓN (KEY SYSTEM) ]
+local function StartKeySystem(onSuccess)
+    local KeyGui = Instance.new("ScreenGui")
+    KeyGui.DisplayOrder = 10
+    KeyGui.Parent = CoreGui
+    ProtectUI(KeyGui)
+
+    local KeyMain = Instance.new("Frame")
+    KeyMain.Size = dim2(0, 300, 0, 180)
+    KeyMain.Position = dim2(0.5, -150, 0.5, -90)
+    KeyMain.BackgroundColor3 = themes.background
+    KeyMain.Parent = KeyGui
+    ApplyShadowBorder(KeyMain)
+    MakeDraggable(KeyMain)
+
+    local KeyInner = Instance.new("Frame")
+    KeyInner.Size = dim2(1, 0, 1, 0)
+    KeyInner.BackgroundTransparency = 1
+    KeyInner.Parent = KeyMain
+    CreateGalaxy(KeyInner)
+    
+    local KeyTitle = Instance.new("TextLabel")
+    KeyTitle.Size = dim2(1, 0, 0, 40)
+    KeyTitle.Text = "PARRA KEY SYSTEM"
+    KeyTitle.Font = Enum.Font.SourceSansBold
+    KeyTitle.TextSize = 20
+    KeyTitle.TextColor3 = themes.white
+    KeyTitle.BackgroundTransparency = 1
+    KeyTitle.Parent = KeyInner
+    ApplySplitEffect(KeyTitle)
+
+    local TextBox = Instance.new("TextBox")
+    TextBox.Size = dim2(0.8, 0, 0, 35)
+    TextBox.Position = dim2(0.1, 0, 0.35, 0)
+    TextBox.BackgroundColor3 = rgb(30, 32, 32)
+    TextBox.Text = ""
+    TextBox.PlaceholderText = "Escribe Key aquí..."
+    TextBox.TextColor3 = themes.white
+    TextBox.Font = Enum.Font.SourceSans
+    TextBox.TextSize = 16
+    TextBox.Parent = KeyInner
+    Instance.new("UICorner", TextBox)
+
+    local SubmitBtn = Instance.new("TextButton")
+    SubmitBtn.Size = dim2(0.8, 0, 0, 35)
+    SubmitBtn.Position = dim2(0.1, 0, 0.65, 0)
+    SubmitBtn.BackgroundColor3 = themes.accent
+    SubmitBtn.Text = "VERIFICAR"
+    SubmitBtn.TextColor3 = themes.white
+    SubmitBtn.Font = Enum.Font.SourceSansBold
+    SubmitBtn.TextSize = 16
+    SubmitBtn.Parent = KeyInner
+    Instance.new("UICorner", SubmitBtn)
+
+    SubmitBtn.MouseButton1Click:Connect(function()
+        if TextBox.Text == "TIO_MIKI" then
+            SubmitBtn.Text = "ACCESO CORRECTO"
+            task.wait(0.5)
+            KeyGui:Destroy()
+            onSuccess()
+        else
+            SubmitBtn.Text = "KEY INVÁLIDA"
+            task.wait(1)
+            SubmitBtn.Text = "VERIFICAR"
+        end
+    end)
+end
+
+-- [ CONSTRUCCIÓN DEL FRAMEWORK DEL HUB ]
+function Library:Window()
+    local MainGui = Instance.new("ScreenGui")
+    MainGui.Parent = CoreGui
+    ProtectUI(MainGui)
+    
+    local OpenBar = Instance.new("Frame")
+    OpenBar.Size = dim2(0, 300, 0, 40)
+    OpenBar.Position = dim2(0.5, -150, 0.05, 0)
+    OpenBar.BackgroundColor3 = themes.background
+    OpenBar.Visible = false
+    OpenBar.Parent = MainGui
+    MakeDraggable(OpenBar)
+    ApplyShadowBorder(OpenBar)
+
+    local OpenBtn = Instance.new("TextButton")
+    OpenBtn.Size = dim2(1, 0, 1, 0)
+    OpenBtn.Text = "PARRA.CC.HUB (OPEN)"
+    OpenBtn.TextColor3 = themes.white
+    OpenBtn.BackgroundTransparency = 1
+    OpenBtn.Font = Enum.Font.SourceSansBold
+    OpenBtn.TextSize = 16
+    OpenBtn.Parent = OpenBar
+    ApplySplitEffect(OpenBtn)
+
+    local Main = Instance.new("Frame")
+    Main.Size = dim2(0, 550, 0, 350)
+    Main.Position = dim2(0.5, -275, 0.5, -175)
+    Main.BackgroundColor3 = themes.background
+    Main.Parent = MainGui
+    MakeDraggable(Main)
+    ApplyShadowBorder(Main)
+
+    local Inner = Instance.new("Frame")
+    Inner.Size = dim2(1, 0, 1, 0)
+    Inner.BackgroundTransparency = 1
+    Inner.Parent = Main
+    CreateGalaxy(Inner)
+    
+    local Title = Instance.new("TextLabel")
+    Title.Size = dim2(0, 350, 0, 35)
+    Title.Position = dim2(0, 130, 0, 10)
+    Title.Text = "PARRA.CC.ACUSADO"
+    Title.Font = Enum.Font.SourceSansBold
+    Title.TextSize = 22
+    Title.BackgroundTransparency = 1
+    Title.TextColor3 = themes.white
+    Title.Parent = Inner
+    ApplySplitEffect(Title)
+
+    local CloseBtn = Instance.new("TextButton")
+    CloseBtn.Size = dim2(0, 30, 0, 30)
+    CloseBtn.Position = dim2(1, -35, 0, 5)
+    CloseBtn.Text = "X"
+    CloseBtn.TextSize = 18
+    CloseBtn.Font = Enum.Font.SourceSansBold
+    CloseBtn.TextColor3 = themes.accent
+    CloseBtn.BackgroundTransparency = 1
+    CloseBtn.Parent = Inner
+
+    CloseBtn.MouseButton1Click:Connect(function() Main.Visible = false; OpenBar.Visible = true end)
+    OpenBtn.MouseButton1Click:Connect(function() Main.Visible = true; OpenBar.Visible = false end)
+
+    local TabList = Instance.new("Frame")
+    TabList.Size = dim2(0, 120, 1, -20)
+    TabList.Position = dim2(0, 5, 0, 10)
+    TabList.BackgroundTransparency = 1
+    TabList.Parent = Inner
+
+    local tabLayout = Instance.new("UIListLayout", TabList)
+    tabLayout.Padding = dim(0, 5)
+
+    local PageHolder = Instance.new("Frame")
+    PageHolder.Size = dim2(1, -135, 1, -60)
+    PageHolder.Position = dim2(0, 130, 0, 50)
+    PageHolder.BackgroundTransparency = 1
+    PageHolder.Parent = Inner
+
+    function Library:AddTab(name)
+        local TabButton = Instance.new("TextButton")
+        TabButton.Size = dim2(1, -10, 0, 35)
+        TabButton.BackgroundColor3 = rgb(25, 27, 27)
+        TabButton.Text = name
+        TabButton.TextColor3 = themes.deselected
+        TabButton.Font = Enum.Font.SourceSansBold
+        TabButton.TextSize = 14
+        TabButton.Parent = TabList
+
+        local Page = Instance.new("ScrollingFrame")
+        Page.Size = dim2(1, 0, 1, 0)
+        Page.Visible = false
+        Page.BackgroundTransparency = 1
+        Page.ScrollBarThickness = 0
+        Page.Parent = PageHolder
+
+        local pageLayout = Instance.new("UIListLayout", Page)
+        pageLayout.Padding = dim(0, 5)
+
+        TabButton.MouseButton1Click:Connect(function()
+            for _, t in ipairs(Library.Tabs) do 
+                t.Button.TextColor3 = themes.deselected
+                t.Page.Visible = false 
+            end
+            TabButton.TextColor3 = themes.accent
+            Page.Visible = true
+        end)
+
+        table.insert(Library.Tabs, { Button = TabButton, Page = Page })
+        if #Library.Tabs == 1 then 
+            TabButton.TextColor3 = themes.accent
+            Page.Visible = true 
+        end
+        return Page
+    end
+
+    function Library:AddToggle(page, text, callback)
+        local Tgl = Instance.new("TextButton")
+        Tgl.Size = dim2(1, -10, 0, 35)
+        Tgl.BackgroundColor3 = rgb(30, 32, 32)
+        Tgl.Text = "  " .. text
+        Tgl.TextColor3 = rgb(200, 200, 200)
+        Tgl.Font = Enum.Font.SourceSans
+        Tgl.TextSize = 14
+        Tgl.TextXAlignment = Enum.TextXAlignment.Left
+        Tgl.Parent = page
+
+        local state = false
+        Tgl.MouseButton1Click:Connect(function() 
+            state = not state
+            Tgl.TextColor3 = state and themes.accent or rgb(200, 200, 200)
+            callback(state) 
+        end)
+        Instance.new("UICorner", Tgl).CornerRadius = dim(0, 4)
+    end
+
+    function Library:AddSlider(page, text, min, max, callback)
+        local frame = Instance.new("Frame")
+        frame.Size = dim2(1, -10, 0, 45)
+        frame.BackgroundTransparency = 1
+        frame.Parent = page
+
+        local label = Instance.new("TextLabel")
+        label.Size = dim2(1, 0, 0, 20)
+        label.Text = text
+        label.TextColor3 = themes.white
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.SourceSans
+        label.TextSize = 14
+        label.Parent = frame
+
+        local bar = Instance.new("TextButton")
+        bar.Size = dim2(1, 0, 0, 10)
+        bar.Position = dim2(0, 0, 0, 22)
+        bar.BackgroundColor3 = rgb(40, 40, 40)
+        bar.Text = ""
+        bar.Parent = frame
+
+        local fill = Instance.new("Frame")
+        fill.Size = dim2(0.2, 0, 1, 0)
+        fill.BackgroundColor3 = themes.accent
+        fill.Parent = bar
+
+        bar.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                local move
+                move = InputService.InputChanged:Connect(function(i)
+                    if i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch then
+                        local p = math.clamp((i.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X, 0, 1)
+                        fill.Size = dim2(p, 0, 1, 0)
+                        callback(math.floor(min + (max - min) * p))
+                    end
+                end)
+                local release
+                release = InputService.InputEnded:Connect(function(i) 
+                    if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then 
+                        move:Disconnect()
+                        release:Disconnect()
+                    end 
+                end)
+            end
+        end)
+    end
+    
+    function Library:AddButton(page, text, callback)
+        local Btn = Instance.new("TextButton")
+        Btn.Size = dim2(1, -10, 0, 35)
+        Btn.BackgroundColor3 = rgb(30, 32, 32)
+        Btn.Text = text
+        Btn.TextColor3 = themes.white
+        Btn.Font = Enum.Font.SourceSansBold
+        Btn.TextSize = 14
+        Btn.Parent = page
+
+        Btn.MouseButton1Click:Connect(callback)
+        Instance.new("UICorner", Btn).CornerRadius = dim(0, 4)
+    end
+
+    return Library
+end
+
+-- [ BUCLE DE PROCESAMIENTO CENTRAL ]
+StartKeySystem(function()
+    local Window = Library:Window()
+    local CombatTab = Window:AddTab("Combate")
+    local VisualsTab = Window:AddTab("Visuales")
+    local ToolsTab = Window:AddTab("Tools")
+
+    RunService.Heartbeat:Connect(function()
+        FOVCircle.Visible = Combat_Settings.ShowFOV
+        FOVCircle.Radius = Combat_Settings.FOV
+        FOVCircle.Position = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+
+        if SpeedEnabled and LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid") then
+            local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if hum.MoveDirection.Magnitude > 0 then
+                LocalPlayer.Character:TranslateBy(hum.MoveDirection * (23 / 100))
+            end
+        end
+
+        if Combat_Settings.AutoClick then
+            local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Tool")
+            if tool and (InputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1) or #InputService:GetTouches() > 0) then
+                tool:Activate()
+            end
+        end
+    end)
+
+    -- CONTENIDO: COMBATE
+    Library:AddToggle(CombatTab, "Silent Aim (Dentro FOV)", function(v) Combat_Settings.SilentAim = v end)
+    Library:AddToggle(CombatTab, "Mostrar FOV", function(v) Combat_Settings.ShowFOV = v end)
+    Library:AddSlider(CombatTab, "Radio FOV", 50, 600, function(v) Combat_Settings.FOV = v end)
+    Library:AddToggle(CombatTab, "AutoClick (Arma Automática)", function(v) Combat_Settings.AutoClick = v end)
+    Library:AddToggle(CombatTab, "Full Bright", function(v) 
+        Lighting.Brightness = v and 2 or 1
+        Lighting.Ambient = v and rgb(255, 255, 255) or rgb(127, 127, 127)
+    end)
+
+    -- CONTENIDO: VISUALES
+    Library:AddToggle(VisualsTab, "ESP Name", function(v) ESP_Settings.Names = v end)
+    Library:AddToggle(VisualsTab, "ESP Box (Solo Lineas)", function(v) ESP_Settings.Box = v end)
+    Library:AddToggle(VisualsTab, "ESP Linea (Trazadores)", function(v) ESP_Settings.Tracers = v end)
+    Library:AddToggle(VisualsTab, "ESP Vida", function(v) ESP_Settings.Health = v end)
+
+    -- CONTENIDO: TOOLS
+    Library:AddToggle(ToolsTab, "Speed Hack (23) Caminar", function(v) SpeedEnabled = v end)
+    Library:AddButton(ToolsTab, "Give Delete Tool", function()
+        local tool = Instance.new("Tool")
+        tool.Name = "Parra Delete"
+        tool.RequiresHandle = false
+        tool.Parent = LocalPlayer.Backpack
+        
+        tool.Activated:Connect(function()
+            local mouse = LocalPlayer:GetMouse()
+            if mouse.Target and mouse.Target:IsA("BasePart") then
+                local obj = mouse.Target
+                table.insert(DeletedObjects, { o = obj, p = obj.Parent })
+                obj.Parent = nil
+            end
+        end)
+    end)
+    Library:AddButton(ToolsTab, "Restaurar Objetos", function()
+        for _, d in ipairs(DeletedObjects) do 
+            if d.o then d.o.Parent = d.p end 
+        end
+        DeletedObjects = {}
+    end)
+
+    print("PARRA EDITION: Inicializado con estabilidad al 100%.")
+end)
